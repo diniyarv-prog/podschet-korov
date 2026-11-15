@@ -5,8 +5,10 @@ import { MotionGuard } from './motion-guard.js';
 import { EvidenceBuffer } from './evidence.js';
 import { createSession, addAutomaticEvent, addManualEvent, reviewEvent, totals } from './session.js';
 import { SessionStore } from './session-store.js';
+import { loadUiSettings, saveUiSettings } from './ui-settings.js';
 
 const get = (id) => document.getElementById(id);
+const appShell = get('app');
 const video = get('video');
 const canvas = get('overlay');
 const context = canvas.getContext('2d');
@@ -16,6 +18,9 @@ const endpointButtons = {start: get('line-start'), end: get('line-end')};
 const view = get('view');
 const directionSelect = get('direction');
 const start = get('start');
+const savedUiSettings = loadUiSettings(window.localStorage);
+view.value = savedUiSettings.view;
+directionSelect.value = savedUiSettings.direction;
 const tracker = new CowTracker();
 const counter = new CrossingCounter();
 const motionGuard = new MotionGuard();
@@ -37,7 +42,7 @@ const directions = {
   down: {axis: 1},
   up: {axis: 1}
 };
-let currentView = view.value;
+let currentView = savedUiSettings.view;
 let modelPromise;
 let stream;
 let fileUrl;
@@ -59,7 +64,7 @@ let lastVideoTime = null;
 let processedTimes = [];
 // Storage writes, including quota retries, must finish in review-action order.
 let saveQueue = Promise.resolve();
-let countingLine = {start: [0.5, 0.15], end: [0.5, 0.85]};
+let countingLine = structuredClone(savedUiSettings.line);
 let draggedEndpoint = null;
 let draggedPointerId = null;
 let lineAdjusted = false;
@@ -100,10 +105,33 @@ function cameraInstructions() {
   return 'Поставь линию поперёк прохода. ' + presets[currentView].hint;
 }
 
+function setStatus(message, tone = 'neutral') {
+  status.textContent = message;
+  status.dataset.tone = tone;
+}
+
+function setPhase(phase) {
+  appShell.dataset.phase = phase;
+  get('launch').hidden = phase !== 'launch';
+  get('workspace').hidden = phase === 'launch' || phase === 'review';
+  get('setup-panel').hidden = phase !== 'setup';
+  get('count-header').hidden = phase !== 'counting';
+  get('action-dock').hidden = phase !== 'setup' && phase !== 'counting';
+  get('review').hidden = phase !== 'review' || !currentSession;
+}
+
+function persistSetup() {
+  saveUiSettings(window.localStorage, {
+    view: currentView,
+    direction: directionSelect.value,
+    line: structuredClone(countingLine),
+  });
+}
+
 function setCounting(active) {
   if (counting && !active) lineAdjusted = false;
   counting = active;
-  start.textContent = active ? 'Завершить подсчёт' : 'Начать новый подсчёт';
+  start.textContent = active ? 'Завершить подсчёт' : 'Начать подсчёт';
   finishDrag();
   view.disabled = active;
   directionSelect.disabled = active;
@@ -150,6 +178,7 @@ function moveEndpoint(endpoint, point) {
   if (Math.hypot(point[0] - other[0], point[1] - other[1]) < 0.01) return;
   countingLine[endpoint] = point;
   lineAdjusted = true;
+  persistSetup();
   redraw();
 }
 
@@ -260,6 +289,17 @@ function renderDiagnostics() {
   get('inference-ms').textContent = Number.isFinite(diagnostics.inferenceMs) ? `${Math.round(diagnostics.inferenceMs)} мс` : '—';
   get('processed-fps').textContent = Number.isFinite(diagnostics.processedFps) ? `${diagnostics.processedFps.toFixed(1)} кадр/с` : '—';
   get('motion-state').textContent = diagnostics.motionBlocked ? 'пауза: тряска' : 'стабильно';
+  renderCountState();
+}
+
+function renderCountState() {
+  const blocked = counting && diagnostics.motionBlocked;
+  const indicator = get('count-state');
+  indicator.textContent = blocked ? 'Пауза' : 'Считает';
+  indicator.dataset.tone = blocked ? 'warning' : 'success';
+  const notice = get('stage-notice');
+  notice.hidden = !blocked;
+  notice.textContent = 'Подсчёт на паузе. Удерживайте телефон неподвижно.';
 }
 
 function redraw() {
@@ -345,7 +385,7 @@ function stopForCameraTrackEnd(id, cameraStream) {
     // The source is no longer usable even if an inference began during preview.
     run++;
     video.pause();
-    status.textContent = message;
+    setStatus(message, 'error');
     renderReview();
     redraw();
   }
@@ -391,14 +431,15 @@ function resetSource() {
 }
 
 async function prepare(id) {
+  if (appShell.dataset.phase !== 'review') setPhase('setup');
   get('placeholder').hidden = true;
   redraw();
-  status.textContent = 'Загружаю модель распознавания…';
+  setStatus('Загружаю модель распознавания…');
   let model;
   try {
     model = await loadModel();
   } catch {
-    if (id === source) status.textContent = 'Модель не загрузилась. Проверь интернет и открой камеру или видео снова.';
+    if (id === source) setStatus('Модель не загрузилась. Проверь интернет и открой камеру или видео снова.', 'error');
     return;
   }
   // A dead camera can finish loading the model after its track ended. Do not
@@ -407,9 +448,9 @@ async function prepare(id) {
   ready = true;
   start.disabled = false;
   start.textContent = 'Начать подсчёт';
-  status.textContent = fileUrl
+  setStatus(fileUrl
     ? 'Поставь линию поперёк прохода, выбери направление и начни подсчёт.'
-    : cameraInstructions();
+    : cameraInstructions(), 'success');
   if (fileUrl) {
     video.pause();
   }
@@ -526,7 +567,7 @@ function processPredictions(id, predictions, frameTime) {
     const message = motion.blocked
       ? 'Камера движется. Автоматический подсчёт на паузе — держи камеру неподвижно.'
       : 'Идёт подсчёт. Рамка становится зелёной после засчитанного прохода.';
-    if (status.textContent !== message) status.textContent = message;
+    if (status.textContent !== message) setStatus(message, motion.blocked ? 'warning' : 'success');
   }
   tracks = tracks.map(track => ({...track, counted: counter.states.get(track.id)?.counted ?? false}));
   get('total').value = String(counter.total);
@@ -563,7 +604,8 @@ function finishCounting(message) {
   evidence.reset();
   video.pause();
   diagnostics.motionBlocked = false;
-  if (message) status.textContent = message;
+  if (message) setStatus(message, 'warning');
+  setPhase('review');
   renderReview();
   redraw();
 }
@@ -573,7 +615,7 @@ function stopWithRecognitionError() {
   ready = false;
   start.disabled = true;
   video.pause();
-  status.textContent = 'Распознавание остановилось. Открой камеру или видео снова. Результат доступен для проверки.';
+  setStatus('Распознавание остановилось. Открой камеру или видео снова. Результат доступен для проверки.', 'error');
 }
 
 function formatTime(milliseconds) {
@@ -591,7 +633,7 @@ const eventReasons = {
 const reviewLabels = {pending: 'Нужна проверка', accepted: 'Учтён', confirmed: 'Подтверждён', removed: 'Удалён'};
 
 function renderReview() {
-  get('review').hidden = !currentSession || counting;
+  get('review').hidden = appShell.dataset.phase !== 'review' || !currentSession || counting;
   if (!currentSession) return;
   const session = currentSession;
   session.totals = totals(session);
@@ -603,7 +645,7 @@ function renderReview() {
   const events = [...session.events].sort((a, b) => priority(a) - priority(b) || a.time - b.time);
   if (!events.length) {
     const empty = document.createElement('p');
-    empty.textContent = 'Проходов пока нет. Если корова прошла незамеченной, добавь проход вручную.';
+    empty.textContent = 'Проходов пока нет. Если животное прошло незамеченным, добавьте проход вручную.';
     list.append(empty);
   }
   for (const event of events) {
@@ -691,16 +733,18 @@ async function openCamera() {
     try {
       await resumeCamera(id);
     } catch {
-      if (id === source) status.textContent = 'Safari не запустил видео. Обнови страницу или выбери снятое видео.';
+      if (id === source) setStatus('Safari не запустил видео. Обнови страницу или выбери снятое видео.', 'error');
     }
     return;
   }
   const id = resetSource();
+  if (appShell.dataset.phase !== 'review') setPhase('setup');
   if (!navigator.mediaDevices?.getUserMedia) {
-    status.textContent = 'Камера доступна по HTTPS. Открой страницу в Safari или выбери снятое видео.';
+    setStatus('Камера доступна по HTTPS. Открой страницу в Safari или выбери снятое видео.', 'error');
+    if (appShell.dataset.phase !== 'review') setPhase('launch');
     return;
   }
-  status.textContent = 'Запрашиваю доступ к задней камере…';
+  setStatus('Запрашиваю доступ к задней камере…');
   try {
     const nextStream = await navigator.mediaDevices.getUserMedia({
       audio: false,
@@ -719,16 +763,17 @@ async function openCamera() {
     } catch {
       if (id === source) {
         get('camera').textContent = 'Включить камеру';
-        status.textContent = 'Камера разрешена. Нажми «Включить камеру», чтобы запустить видео.';
+        setStatus('Камера разрешена. Нажми «Включить камеру», чтобы запустить видео.', 'warning');
       }
     }
   } catch (error) {
     if (id !== source) return;
     stream?.getTracks().forEach(track => track.stop());
     stream = undefined;
-    status.textContent = error.name === 'NotAllowedError'
+    setStatus(error.name === 'NotAllowedError'
       ? 'Разреши камеру в настройках этого сайта в Safari, затем нажми «Включить камеру». Можно выбрать снятое видео.'
-      : 'Камера не открылась. Нажми «Включить камеру» ещё раз или выбери снятое видео.';
+      : 'Камера не открылась. Нажми «Включить камеру» ещё раз или выбери снятое видео.', 'error');
+    if (appShell.dataset.phase !== 'review') setPhase('launch');
   }
 }
 
@@ -756,8 +801,9 @@ start.addEventListener('click', async () => {
   get('storage-message').textContent = '';
   get('review-message').textContent = '';
   setCounting(true);
+  setPhase('counting');
   renderReview();
-  status.textContent = 'Идёт подсчёт. Рамка становится зелёной после засчитанного прохода.';
+  setStatus('Идёт подсчёт. Рамка становится зелёной после засчитанного прохода.', 'success');
   if (fileUrl || video.paused) {
     try {
       await video.play();
@@ -801,10 +847,11 @@ view.addEventListener('change', () => {
   currentView = view.value;
   directionSelect.value = presets[currentView].direction;
   useDefaultLine();
-  if (ready && !fileUrl && counter.total === 0) status.textContent = cameraInstructions();
+  persistSetup();
+  if (ready && !fileUrl && counter.total === 0) setStatus(cameraInstructions(), 'success');
   redraw();
 });
-directionSelect.addEventListener('change', () => { useDefaultLine(); redraw(); });
+directionSelect.addEventListener('change', () => { useDefaultLine(); persistSetup(); redraw(); });
 get('camera').addEventListener('click', openCamera);
 get('file').addEventListener('click', () => get('input').click());
 get('input').addEventListener('change', async (event) => {
@@ -812,6 +859,7 @@ get('input').addEventListener('change', async (event) => {
   event.target.value = '';
   if (!file) return;
   const id = resetSource();
+  if (appShell.dataset.phase !== 'review') setPhase('setup');
   fileUrl = URL.createObjectURL(file);
   videoFilename = file.name;
   video.src = fileUrl;
@@ -823,10 +871,20 @@ get('input').addEventListener('change', async (event) => {
       prepare(id);
     }
   } catch {
-    if (id === source) status.textContent = 'Не удалось открыть видео. Попробуй видео, снятое камерой iPhone.';
+    if (id === source) setStatus('Не удалось открыть видео. Попробуй видео, снятое камерой iPhone.', 'error');
   }
 });
 debug.addEventListener('change', redraw);
 video.addEventListener('resize', redraw);
 new ResizeObserver(redraw).observe(get('stage'));
-openCamera();
+get('change-source').addEventListener('click', () => {
+  resetSource();
+  setStatus('Выберите камеру или готовое видео.');
+  setPhase('launch');
+});
+get('confirm-review').addEventListener('click', () => {
+  setStatus(cameraInstructions(), 'success');
+  setPhase('setup');
+  redraw();
+});
+setPhase('launch');
