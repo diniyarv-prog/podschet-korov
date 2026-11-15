@@ -32,11 +32,17 @@ export class CrossingCounter {
       }
     }
     for (const {track, isObserved} of observed.values()) {
-      const position = orientedDistance(boxCenter(track.box), line, automaticDirection ? 'right' : direction);
+      const activeDirection = automaticDirection ? 'right' : direction;
+      const position = orientedDistance(boxCenter(track.box), line, activeDirection);
+      const firstPoint = track.history?.[0]?.point;
+      const initialPosition = firstPoint ? orientedDistance(firstPoint, line, activeDirection) : position;
       const state = this.states.get(track.id) ?? {
-        approached: false, crossed: false, counted: false,
-        uncertainSent: false, motionCandidate: false, approachSign: 0,
-        lastPosition: position, lastObservedTime: time
+        approached: !automaticDirection && initialPosition <= -this.entryDistance,
+        crossed: false, counted: false, uncertainSent: false, motionCandidate: false,
+        approachSign: automaticDirection && Math.abs(initialPosition) >= this.entryDistance
+          ? Math.sign(initialPosition)
+          : 0,
+        lastPosition: initialPosition, lastObservedTime: time
       };
       // Both outcomes are terminal: review may change an event, never the
       // number of passages contributed by this track.
