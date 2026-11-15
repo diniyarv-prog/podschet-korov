@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#14221d">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="icon-192.png">
+<title>Подсчёт коров</title>
+<link rel="stylesheet" href="style.css">
+<script type="module" src="app.js"></script>
+</head>
+<body>
+<main>
+  <header>
+    <h1>Подсчёт коров</h1>
+    <div class="total"><span>Прошло</span><output id="total">0</output></div>
+  </header>
+  <section id="stage" aria-label="Изображение с камеры">
+    <video id="video" autoplay playsinline muted></video>
+    <canvas id="overlay" aria-hidden="true"></canvas>
+    <button id="line-start" class="line-endpoint" aria-label="Первый край линии" aria-describedby="line-help" hidden></button>
+    <button id="line-end" class="line-endpoint" aria-label="Второй край линии" aria-describedby="line-help" hidden></button>
+    <div id="placeholder">Наведи камеру сбоку на проход</div>
+  </section>
+  <p id="status" role="status">Разреши доступ к задней камере.</p>
+  <div class="settings">
+    <label for="view">Ракурс</label>
+    <select id="view">
+      <option value="side">Сбоку</option>
+      <option value="overhead">Сверху</option>
+    </select>
+    <label for="direction">Движение</label>
+    <select id="direction">
+      <option value="right">Слева → направо</option>
+      <option value="left">Справа → налево</option>
+      <option value="down">Сверху → вниз</option>
+      <option value="up">Снизу → вверх</option>
+    </select>
+  </div>
+  <div class="tools">
+    <div id="line-help" class="line-help">Перетащи два края линии поперёк прохода<span class="keyboard-help">С клавиатуры: Tab выбирает край, стрелки двигают его.</span></div>
+    <label class="debug-toggle"><input id="debug" type="checkbox"> Режим проверки</label>
+  </div>
+  <dl id="diagnostics" hidden>
+    <div><dt>Модель</dt><dd id="inference-ms">—</dd></div>
+    <div><dt>Кадры</dt><dd id="processed-fps">—</dd></div>
+    <div><dt>Камера</dt><dd id="motion-state">стабильно</dd></div>
+  </dl>
+  <div class="buttons">
+    <button id="start" class="primary" disabled>Начать подсчёт</button>
+    <button id="camera">Включить камеру</button>
+    <button id="file">Выбрать видео</button>
+    <input type="file" id="input" accept="video/*" hidden>
+  </div>
+  <section id="review" hidden aria-labelledby="review-title">
+    <h2 id="review-title">Проверка результата</h2>
+    <p id="review-warning">Полностью скрытые животные могут быть пропущены. Проверь итог и при необходимости добавь проход вручную.</p>
+    <div class="review-totals">
+      <p>Автоматически: <output id="automatic-total">0</output></p>
+      <p>Подтверждено: <output id="confirmed-total">0</output></p>
+    </div>
+    <div id="review-events"></div>
+    <button id="add-missed">Добавить пропущенный проход</button>
+    <p id="review-message" role="status"></p>
+    <p id="storage-message" role="status" hidden></p>
+  </section>
+</main>
+</body>
+</html>
