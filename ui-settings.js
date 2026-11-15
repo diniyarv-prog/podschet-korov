@@ -1,10 +1,11 @@
-const KEY = 'cow-counter-ui-v1';
+const KEY = 'cow-counter-ui-v2';
+const LEGACY_KEY = 'cow-counter-ui-v1';
 const views = new Set(['side', 'overhead']);
-const directions = new Set(['right', 'left', 'down', 'up']);
+const directions = new Set(['auto', 'right', 'left', 'down', 'up']);
 
 export const DEFAULT_UI_SETTINGS = Object.freeze({
   view: 'side',
-  direction: 'right',
+  direction: 'auto',
   line: {start: [0.5, 0.15], end: [0.5, 0.85]},
 });
 
@@ -25,7 +26,11 @@ const clone = value => structuredClone(value);
 export function loadUiSettings(storage) {
   try {
     const value = JSON.parse(storage?.getItem(KEY) ?? 'null');
-    return valid(value) ? clone(value) : clone(DEFAULT_UI_SETTINGS);
+    if (valid(value)) return clone(value);
+    const legacy = JSON.parse(storage?.getItem(LEGACY_KEY) ?? 'null');
+    return valid(legacy)
+      ? {...clone(legacy), direction: 'auto'}
+      : clone(DEFAULT_UI_SETTINGS);
   } catch {
     return clone(DEFAULT_UI_SETTINGS);
   }

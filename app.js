@@ -33,10 +33,11 @@ motionFrame.width = 64;
 motionFrame.height = 36;
 const motionContext = motionFrame.getContext('2d', {willReadFrequently: true});
 const presets = {
-  side: {direction: 'right', hint: 'Держи ворота на одном месте в кадре.'},
-  overhead: {direction: 'down', hint: 'Держи в кадре участок, через который проходят коровы.'}
+  side: {direction: 'auto', hint: 'Держи ворота на одном месте в кадре.'},
+  overhead: {direction: 'auto', hint: 'Держи в кадре участок, через который проходят коровы.'}
 };
 const directions = {
+  auto: {axis: null},
   right: {axis: 0},
   left: {axis: 0},
   down: {axis: 1},
@@ -167,7 +168,10 @@ function canvasPoint([x, y], frame) {
 
 function useDefaultLine() {
   if (lineAdjusted) return;
-  countingLine = directions[directionSelect.value].axis === 0
+  const axis = directionSelect.value === 'auto'
+    ? (currentView === 'side' ? 0 : 1)
+    : directions[directionSelect.value].axis;
+  countingLine = axis === 0
     ? {start: [0.5, 0.15], end: [0.5, 0.85]}
     : {start: [0.15, 0.5], end: [0.85, 0.5]};
 }
@@ -233,7 +237,7 @@ function drawCountingLine(frame) {
   const length = Math.hypot(dx, dy) || 1;
   let nx = -dy / length;
   let ny = dx / length;
-  const [tx, ty] = directionVectors[directionSelect.value];
+  const [tx, ty] = directionVectors[directionSelect.value] ?? [1, 0];
   if (nx * tx + ny * ty < 0) { nx *= -1; ny *= -1; }
   // Match the counter's normalized distances, including non-square video.
   const entryX = nx * counter.entryDistance * frame.width;

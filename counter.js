@@ -17,6 +17,7 @@ export class CrossingCounter {
 
   update(tracks, time, line, direction, {counting = true, motionBlocked = false} = {}) {
     if (!counting) return [];
+    const automaticDirection = direction === 'auto';
     const events = [];
     for (const [id, state] of this.states) {
       if (time - state.lastObservedTime > this.stateRetentionMs) this.states.delete(id);
@@ -31,10 +32,10 @@ export class CrossingCounter {
       }
     }
     for (const {track, isObserved} of observed.values()) {
-      const position = orientedDistance(boxCenter(track.box), line, direction);
+      const position = orientedDistance(boxCenter(track.box), line, automaticDirection ? 'right' : direction);
       const state = this.states.get(track.id) ?? {
         approached: false, crossed: false, counted: false,
-        uncertainSent: false, motionCandidate: false,
+        uncertainSent: false, motionCandidate: false, approachSign: 0,
         lastPosition: position, lastObservedTime: time
       };
       // Both outcomes are terminal: review may change an event, never the
@@ -51,22 +52,40 @@ export class CrossingCounter {
         continue;
       }
       if (motionBlocked) {
-        state.motionCandidate ||= state.approached;
-        const reachedZone = state.crossed || Math.max(state.lastPosition, position) >= -this.entryDistance;
+        state.motionCandidate ||= automaticDirection ? state.approachSign !== 0 : state.approached;
+        const reachedZone = state.crossed || (automaticDirection
+          ? Math.min(Math.abs(state.lastPosition), Math.abs(position)) <= this.entryDistance ||
+            state.lastPosition * position <= 0
+          : Math.max(state.lastPosition, position) >= -this.entryDistance);
         if (state.motionCandidate && reachedZone) {
           state.uncertainSent = true;
           events.push(this.event(track, time, 'uncertain', 'camera-motion'));
         }
         // A later count needs a fresh approach wholly observed after motion.
         state.approached = false;
+        state.approachSign = 0;
         state.crossed = false;
+      } else if (automaticDirection) {
+        state.motionCandidate = false;
+        if (!state.approachSign) {
+          if (position <= -this.entryDistance) state.approachSign = -1;
+          else if (position >= this.entryDistance) state.approachSign = 1;
+        }
+        if ((state.approachSign < 0 && state.lastPosition <= 0 && position >= 0) ||
+            (state.approachSign > 0 && state.lastPosition >= 0 && position <= 0)) {
+          state.crossed = true;
+        }
       } else {
         state.motionCandidate = false;
         if (position <= -this.entryDistance) state.approached = true;
         if (state.approached && state.lastPosition <= 0 && position >= 0) state.crossed = true;
       }
+      const reachedExit = automaticDirection
+        ? (state.approachSign < 0 && position >= this.exitDistance) ||
+          (state.approachSign > 0 && position <= -this.exitDistance)
+        : position >= this.exitDistance;
       if (!motionBlocked && state.crossed && !state.counted &&
-          position >= this.exitDistance && track.hits >= this.minHits) {
+          reachedExit && track.hits >= this.minHits) {
         state.counted = true;
         this.total += 1;
         events.push(this.event(track, time, 'count', this.reason(track)));
